@@ -25,7 +25,7 @@
 ## 📑 Contents
 
 - [📰 News]
-   - **2026-03-03:** Codebase and Weights of detection are now available.
+   - **2026-03-03:** Codebase and Weights are now available.
    - **2026-02-24:** TA-ISP is accepted by CVPR 2026
 
 - [📚 Citation]
