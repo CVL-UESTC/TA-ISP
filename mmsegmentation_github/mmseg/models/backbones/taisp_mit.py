@@ -294,46 +294,6 @@ class TransformerEncoderLayer(BaseModule):
             x = _inner_forward(x)
         return x
 
-# Copyright 2023 Huawei Technologies Co., Ltd
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ============================================================================
-
-
-from torch import nn
-import torch
-import torch.nn.functional as F
-
-class BaseConv(nn.Module):
-    """A Conv2d -> Batchnorm -> silu/leaky relu block"""
-
-    def __init__(self, in_channels, out_channels, ksize=3, stride=1, bias=True):
-        super().__init__()
-        # same padding
-        pad = (ksize - 1) // 2
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=ksize, stride=stride, padding=pad, bias=bias)
-        self.act = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        return self.act(self.conv(x))
-
-def tanh_range(l=0.5, r=2.0):
-    def get_activation(left, right):
-        def activation(x):
-            return (torch.tanh(x) * 0.5 + 0.5) * (right - left) + left
-        return activation
-    return get_activation(l, r)
-
 class MultiScaleSpatialAttention(nn.Module):
     """
     Multi-scale spatial attention that produces a single-channel attention map (B,1,H,W).
@@ -388,17 +348,6 @@ class MultiScaleSpatialAttention(nn.Module):
         return out
 
 class MultipleMaskISP_Conv(nn.Module):
-    """
-    Conv-based mask prediction with brightness gain and FiLM-conditioned masks,
-    with dataset-adaptable channel weight range.
-
-    1. Compute global stats (mean, var).
-    2. MLP derives per-channel dgain (>1) applied to raw.
-    3. MLP derives FiLM γ/β to condition mask logits.
-    4. Predict K spatial masks via 1×1 conv on adjusted raw.
-    5. Fuse masks with original raw.
-    6. Channel weights are learned and mapped to a user-specified [w_min,w_max].
-    """
     def __init__(self,
                  in_ch=3,
                  num_masks=16,
@@ -412,36 +361,26 @@ class MultipleMaskISP_Conv(nn.Module):
         self.w_min, self.w_max = weight_range
     
 
-        # MLP for dgain (brightness adjustment)
         self.gain_mlp = nn.Sequential(
             nn.Linear(in_ch * 2, mlp_hidden),
             nn.ReLU(inplace=True),
             nn.Linear(mlp_hidden, in_ch),
-            nn.Softplus()  # gain >= 0, then +1 in forward
+            nn.Softplus() 
         )
-        # self.mask_head = MultiScalePyramid(in_ch, num_masks)
+
         self.mask_head = nn.Conv2d(in_ch, num_masks, kernel_size=3,padding=1)
-        # self.mask_head = nn.Sequential(
-        #     nn.Conv2d(in_ch, num_masks, kernel_size=1),
-        #     nn.ReLU(inplace=True),
-        #     nn.Conv2d(num_masks, num_masks, kernel_size=3,padding=1,groups=num_masks)
-        # )
-        # MLP for raw channel weight logits
         
         self.weight_mlp = nn.Sequential(
             nn.Linear(num_masks, mlp_hidden),
             nn.ReLU(inplace=True),
             nn.Linear(mlp_hidden, num_masks)
         )
-        # self.attn = SpatialAttention(kernel_size=3)
-        # self.attn = PerChannelSpatialAttention(in_channels=3)
+    
         self.attn = MultiScaleSpatialAttention(in_channels=3)
-        # self.attn = SelectiveKernelBlock(in_ch=3)
+
 
     def forward(self, raw):
-        # print(raw.max())
         B, C, H, W = raw.shape
-        # 1. global stats
         mean = raw.reshape(B, C, -1).mean(dim=-1)
         var  = raw.reshape(B, C, -1).var(dim=-1, unbiased=False)
         stats = torch.cat([mean, var], dim=1)  # (B, 2C)
